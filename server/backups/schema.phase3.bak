@@ -1,0 +1,196 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 1. Customer User Model
+model Customer {
+  id           String           @id
+  name         String
+  email        String           @unique
+  passwordHash String
+  role         String           @default("customer")
+  phone        String
+  avatar       String?
+  address      String
+  latitude     Float
+  longitude    Float
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  requests     ServiceRequest[]
+  histories    ServiceHistory[]
+
+  @@map("customers")
+}
+
+// 2. Service Category Model
+model ServiceCategory {
+  id              String           @id
+  name            String
+  icon            String
+  slaTargetMin    Int
+  commonIssues    String[]
+  defaultPriority String           @default("HIGH")
+  description     String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  technicians     Technician[]
+  requests        ServiceRequest[]
+
+  @@map("service_categories")
+}
+
+// 3. Technician Specialist Model
+model Technician {
+  id                 String               @id
+  name               String
+  email              String               @unique
+  passwordHash       String
+  role               String               @default("technician")
+  phone              String
+  avatar             String?
+  categoryId         String
+  categoryName       String
+  rating             Float                @default(4.8)
+  reviewCount        Int                  @default(0)
+  isOnline           Boolean              @default(true)
+  status             String               @default("idle")
+  currentLat         Float
+  currentLng         Float
+  currentAddress     String
+  workingRadiusKm    Float                @default(15.0)
+  completedJobsToday Int                  @default(0)
+  walletBalance      Float                @default(380.0)
+  earningsToday      Float                @default(0.0)
+  activeRequestId    String?
+  vehicleType        String               @default("Emergency Response Vehicle")
+  vehiclePlate       String               @default("RES-101")
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  category           ServiceCategory      @relation(fields: [categoryId], references: [id])
+  assignedRequests   ServiceRequest[]     @relation("AssignedTechnician")
+  assignments        DispatchAssignment[]
+  serviceHistories   ServiceHistory[]
+
+  @@index([categoryId])
+  @@index([isOnline, status])
+  @@map("technicians")
+}
+
+// 4. Emergency Service Request Model
+model ServiceRequest {
+  id                   String               @id
+  customerId           String
+  customerName         String
+  customerPhone        String
+  categoryId           String
+  categoryName         String
+  priority             String               @default("CRITICAL")
+  issueDescription     String
+  address              String
+  latitude             Float
+  longitude            Float
+  imageUrl             String?
+  status               String               @default("pending")
+  assignedTechnicianId String?
+  assignedAt           DateTime?
+  acceptedAt           DateTime?
+  enRouteAt            DateTime?
+  arrivedAt            DateTime?
+  workStartedAt        DateTime?
+  completedAt          DateTime?
+  cancelledAt          DateTime?
+  cancelReason         String?
+  escalatedReason      String?
+  distanceKm           Float?
+  etaMinutes           Int?
+  currentScore         Float?
+  timeoutRemaining     Int?
+  otp                  String?
+  otpVerified          Boolean              @default(false)
+  resolutionNotes      String?
+  partsUsed            String?
+  beforePhoto          String?
+  afterPhoto           String?
+  rating               Int?
+  feedback             String?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  customer             Customer             @relation(fields: [customerId], references: [id])
+  category             ServiceCategory      @relation(fields: [categoryId], references: [id])
+  assignedTechnician   Technician?          @relation("AssignedTechnician", fields: [assignedTechnicianId], references: [id])
+  invoice              Invoice?
+  dispatchAttempts     DispatchAssignment[]
+  serviceHistory       ServiceHistory?
+
+  @@index([status])
+  @@index([categoryId])
+  @@index([assignedTechnicianId])
+  @@map("service_requests")
+}
+
+// 5. Dispatch Assignment Attempt Model
+model DispatchAssignment {
+  id              String         @id @default(cuid())
+  requestId       String
+  technicianId    String
+  technicianName  String
+  score           Float
+  distanceKm      Float
+  outcome         String         @default("pending")
+  rejectionReason String?
+  assignedAt      DateTime       @default(now())
+  timedOutAt      DateTime?
+  request         ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  technician      Technician     @relation(fields: [technicianId], references: [id])
+
+  @@index([requestId])
+  @@index([technicianId])
+  @@map("dispatch_assignments")
+}
+
+// 6. Service Invoice Model
+model Invoice {
+  id                String         @id @default(cuid())
+  requestId         String         @unique
+  inspectionFee     Float          @default(49.0)
+  emergencyLabor    Float          @default(75.0)
+  prioritySurcharge Float          @default(25.0)
+  totalAmount       Float          @default(149.0)
+  isPaid            Boolean        @default(false)
+  paidAt            DateTime?
+  paymentMethod     String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  request           ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@map("invoices")
+}
+
+// 7. Completed Incident History Model
+model ServiceHistory {
+  id               String         @id @default(cuid())
+  requestId        String         @unique
+  customerId       String
+  technicianId     String?
+  categoryName     String
+  issueDescription String
+  status           String
+  totalAmount      Float
+  isPaid           Boolean
+  rating           Int?
+  feedback         String?
+  completedAt      DateTime?
+  createdAt        DateTime       @default(now())
+  customer         Customer       @relation(fields: [customerId], references: [id])
+  technician       Technician?    @relation(fields: [technicianId], references: [id])
+  request          ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([technicianId])
+  @@map("service_histories")
+}

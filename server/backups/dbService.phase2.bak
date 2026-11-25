@@ -1,0 +1,475 @@
+import { prisma, verifyDatabaseConnection, isDatabaseConnected } from '../db/prisma.js';
+import { runDatabaseSeed } from '../prisma/seed.js';
+
+export class DatabaseService {
+  constructor() {
+    this.isConnected = false;
+  }
+
+  /**
+   * Initializes database connection, checks availability, runs seed if empty,
+   * and restores in-memory state (categories, specialists, customers, and active/completed requests)
+   * from PostgreSQL records.
+   */
+  async initialize(inMemoryState) {
+    try {
+      this.isConnected = await verifyDatabaseConnection();
+
+      if (this.isConnected) {
+        console.log('[DB Service] Synchronizing in-memory state with PostgreSQL...');
+
+        // 1. Check if categories are seeded
+        const catCount = await prisma.serviceCategory.count();
+        if (catCount === 0) {
+          console.log('[DB Service] Database empty, triggering automatic seed...');
+          await runDatabaseSeed();
+        }
+
+        // 2. Hydrate categories
+        const dbCategories = await prisma.serviceCategory.findMany();
+        if (dbCategories.length > 0) {
+          inMemoryState.categories = dbCategories;
+        }
+
+        // 3. Hydrate technicians
+        const dbTechnicians = await prisma.technician.findMany();
+        if (dbTechnicians.length > 0) {
+          inMemoryState.technicians = dbTechnicians.map((t) => ({
+            id: t.id,
+            name: t.name,
+            email: t.email,
+            role: t.role,
+            phone: t.phone,
+            avatar: t.avatar,
+            category: t.categoryId,
+            categoryName: t.categoryName,
+            rating: t.rating,
+            reviewCount: t.reviewCount,
+            isOnline: t.isOnline,
+            status: t.status,
+            currentLocation: {
+              lat: t.currentLat,
+              lng: t.currentLng,
+              address: t.currentAddress
+            },
+            workingRadiusKm: t.workingRadiusKm,
+            completedJobsToday: t.completedJobsToday,
+            walletBalance: t.walletBalance,
+            earningsToday: t.earningsToday,
+            activeRequestId: t.activeRequestId,
+            vehicle: { type: t.vehicleType, plate: t.vehiclePlate }
+          }));
+        }
+
+        // 4. Hydrate registered customers into state.users
+        const dbCustomers = await prisma.customer.findMany();
+        if (dbCustomers.length > 0 && Array.isArray(inMemoryState.users)) {
+          for (const cust of dbCustomers) {
+            const existingIdx = inMemoryState.users.findIndex((u) => u.id === cust.id);
+            const userObj = {
+              id: cust.id,
+              name: cust.name,
+              email: cust.email,
+              role: cust.role,
+              phone: cust.phone,
+              avatar: cust.avatar,
+              address: cust.address,
+              coordinates: { lat: cust.latitude, lng: cust.longitude }
+            };
+            if (existingIdx >= 0) {
+              inMemoryState.users[existingIdx] = { ...inMemoryState.users[existingIdx], ...userObj };
+            } else {
+              inMemoryState.users.push(userObj);
+            }
+          }
+        }
+
+        // 5. Hydrate existing requests (including invoice and dispatch attempts)
+        const dbRequests = await prisma.serviceRequest.findMany({
+          include: {
+            invoice: true,
+            dispatchAttempts: true
+          },
+          orderBy: { createdAt: 'desc' }
+        });
+
+        if (dbRequests.length > 0) {
+          inMemoryState.requests = dbRequests.map((r) => ({
+            id: r.id,
+            customerId: r.customerId,
+            customerName: r.customerName,
+            customerPhone: r.customerPhone,
+            category: r.categoryId,
+            categoryName: r.categoryName,
+            priority: r.priority,
+            issueDescription: r.issueDescription,
+            location: {
+              lat: r.latitude,
+              lng: r.longitude,
+              address: r.address
+            },
+            imageUrl: r.imageUrl || '',
+            status: r.status,
+            assignedTechnicianId: r.assignedTechnicianId,
+            assignedAt: r.assignedAt ? r.assignedAt.toISOString() : undefined,
+            acceptedAt: r.acceptedAt ? r.acceptedAt.toISOString() : undefined,
+            enRouteAt: r.enRouteAt ? r.enRouteAt.toISOString() : undefined,
+            arrivedAt: r.arrivedAt ? r.arrivedAt.toISOString() : undefined,
+            workStartedAt: r.workStartedAt ? r.workStartedAt.toISOString() : undefined,
+            completedAt: r.completedAt ? r.completedAt.toISOString() : undefined,
+            cancelledAt: r.cancelledAt ? r.cancelledAt.toISOString() : undefined,
+            cancelReason: r.cancelReason,
+            escalatedReason: r.escalatedReason,
+            distanceKm: r.distanceKm,
+            etaMinutes: r.etaMinutes,
+            currentScore: r.currentScore,
+            timeoutRemaining: r.timeoutRemaining || 0,
+            otp: r.otp,
+            otpVerified: r.otpVerified,
+            resolutionNotes: r.resolutionNotes,
+            partsUsed: r.partsUsed,
+            beforePhoto: r.beforePhoto,
+            afterPhoto: r.afterPhoto,
+            rating: r.rating,
+            feedback: r.feedback,
+            createdAt: r.createdAt ? r.createdAt.toISOString() : new Date().toISOString(),
+            invoice: r.invoice
+              ? {
+                  inspectionFee: r.invoice.inspectionFee,
+                  emergencyLabor: r.invoice.emergencyLabor,
+                  prioritySurcharge: r.invoice.prioritySurcharge,
+                  totalAmount: r.invoice.totalAmount,
+                  isPaid: r.invoice.isPaid,
+                  paidAt: r.invoice.paidAt ? r.invoice.paidAt.toISOString() : undefined,
+                  paymentMethod: r.invoice.paymentMethod
+                }
+              : null,
+            dispatchAttempts: (r.dispatchAttempts || []).map((da) => ({
+              technicianId: da.technicianId,
+              technicianName: da.technicianName,
+              score: da.score,
+              distanceKm: da.distanceKm,
+              outcome: da.outcome,
+              rejectionReason: da.rejectionReason,
+              assignedAt: da.assignedAt ? da.assignedAt.toISOString() : undefined
+            }))
+          }));
+        }
+
+        console.log(
+          `[DB Service] ✅ Synced from PostgreSQL: ${inMemoryState.categories.length} categories, ${inMemoryState.technicians.length} specialists, ${inMemoryState.requests.length} requests, ${dbCustomers.length} customers.`
+        );
+      }
+    } catch (err) {
+      this.isConnected = false;
+      console.warn(`[DB Service] ⚠️ Database initialization bypassed: ${err.message}`);
+    }
+  }
+
+  /**
+   * Persists a newly created emergency service request into PostgreSQL.
+   */
+  async persistEmergencyRequest(reqObj) {
+    if (!this.isConnected) return null;
+
+    try {
+      const custId = reqObj.customerId || 'u_cust_1';
+      // Ensure customer exists in DB before linking
+      const existingCustomer = await prisma.customer.findUnique({
+        where: { id: custId }
+      });
+
+      if (!existingCustomer) {
+        const email = `${custId}@resqdispatch.com`;
+        const emailExists = await prisma.customer.findUnique({ where: { email } });
+        const safeEmail = emailExists ? `${custId}_${Date.now()}@resqdispatch.com` : email;
+
+        await prisma.customer.create({
+          data: {
+            id: custId,
+            name: reqObj.customerName || 'Jane Doe',
+            email: safeEmail,
+            passwordHash: '$2a$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', // 'cust123'
+            phone: reqObj.customerPhone || '+1 (555) 234-5678',
+            address: reqObj.location?.address || '452 Broadway, SoHo, NY',
+            latitude: reqObj.location?.lat || 40.7208,
+            longitude: reqObj.location?.lng || -74.0007
+          }
+        });
+      }
+
+      const invoiceData = reqObj.invoice
+        ? {
+            inspectionFee: reqObj.invoice.inspectionFee || 49.0,
+            emergencyLabor: reqObj.invoice.emergencyLabor || 75.0,
+            prioritySurcharge: reqObj.invoice.prioritySurcharge || 25.0,
+            totalAmount: reqObj.invoice.totalAmount || 149.0,
+            isPaid: reqObj.invoice.isPaid || false
+          }
+        : {
+            inspectionFee: 49.0,
+            emergencyLabor: 75.0,
+            prioritySurcharge: 25.0,
+            totalAmount: 149.0,
+            isPaid: false
+          };
+
+      const created = await prisma.serviceRequest.upsert({
+        where: { id: reqObj.id },
+        update: {
+          status: reqObj.status || 'pending',
+          otp: reqObj.otp || null,
+          otpVerified: reqObj.otpVerified || false
+        },
+        create: {
+          id: reqObj.id,
+          customerId: custId,
+          customerName: reqObj.customerName || 'Jane Doe',
+          customerPhone: reqObj.customerPhone || '+1 (555) 234-5678',
+          categoryId: reqObj.category,
+          categoryName: reqObj.categoryName || reqObj.category,
+          priority: reqObj.priority || 'CRITICAL',
+          issueDescription: reqObj.issueDescription,
+          address: reqObj.location?.address || 'Emergency Site',
+          latitude: reqObj.location?.lat || 40.7208,
+          longitude: reqObj.location?.lng || -74.0007,
+          imageUrl: reqObj.imageUrl || '',
+          status: reqObj.status || 'pending',
+          otp: reqObj.otp || null,
+          otpVerified: reqObj.otpVerified || false,
+          createdAt: new Date(reqObj.createdAt || Date.now()),
+          invoice: {
+            create: invoiceData
+          }
+        }
+      });
+
+      return created;
+    } catch (err) {
+      console.error(`[DB Service] ❌ Failed to persist request ${reqObj.id}:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Updates an existing emergency request with atomic field updates.
+   */
+  async updateRequest(requestId, updates) {
+    if (!this.isConnected) return null;
+
+    try {
+      const data = {};
+      if (updates.status) data.status = updates.status;
+      if (updates.assignedTechnicianId !== undefined) data.assignedTechnicianId = updates.assignedTechnicianId;
+      if (updates.assignedAt) data.assignedAt = new Date(updates.assignedAt);
+      if (updates.acceptedAt) data.acceptedAt = new Date(updates.acceptedAt);
+      if (updates.enRouteAt) data.enRouteAt = new Date(updates.enRouteAt);
+      if (updates.arrivedAt) data.arrivedAt = new Date(updates.arrivedAt);
+      if (updates.workStartedAt) data.workStartedAt = new Date(updates.workStartedAt);
+      if (updates.completedAt) data.completedAt = new Date(updates.completedAt);
+      if (updates.cancelledAt) data.cancelledAt = new Date(updates.cancelledAt);
+      if (updates.cancelReason) data.cancelReason = updates.cancelReason;
+      if (updates.escalatedReason) data.escalatedReason = updates.escalatedReason;
+      if (updates.distanceKm !== undefined) data.distanceKm = updates.distanceKm;
+      if (updates.etaMinutes !== undefined) data.etaMinutes = updates.etaMinutes;
+      if (updates.currentScore !== undefined) data.currentScore = updates.currentScore;
+      if (updates.timeoutRemaining !== undefined) data.timeoutRemaining = updates.timeoutRemaining;
+      if (updates.otp) data.otp = updates.otp;
+      if (updates.otpVerified !== undefined) data.otpVerified = updates.otpVerified;
+      if (updates.resolutionNotes) data.resolutionNotes = updates.resolutionNotes;
+      if (updates.partsUsed) data.partsUsed = updates.partsUsed;
+      if (updates.beforePhoto) data.beforePhoto = updates.beforePhoto;
+      if (updates.afterPhoto) data.afterPhoto = updates.afterPhoto;
+      if (updates.rating !== undefined) data.rating = updates.rating;
+      if (updates.feedback) data.feedback = updates.feedback;
+
+      const updated = await prisma.serviceRequest.update({
+        where: { id: requestId },
+        data
+      });
+
+      // Synchronize rating/feedback with ServiceHistory if already completed
+      if (updates.rating !== undefined || updates.feedback) {
+        await prisma.serviceHistory
+          .updateMany({
+            where: { requestId },
+            data: {
+              rating: updates.rating !== undefined ? updates.rating : undefined,
+              feedback: updates.feedback || undefined
+            }
+          })
+          .catch(() => {});
+      }
+
+      return updated;
+    } catch (err) {
+      console.error(`[DB Service] ❌ Error updating request ${requestId}:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Records a single dispatch assignment attempt to maintain full audit trails.
+   */
+  async recordAssignmentAttempt(attempt) {
+    if (!this.isConnected) return null;
+
+    try {
+      return await prisma.dispatchAssignment.create({
+        data: {
+          requestId: attempt.requestId,
+          technicianId: attempt.technicianId,
+          technicianName: attempt.technicianName || 'Specialist',
+          score: attempt.score || 0.0,
+          distanceKm: attempt.distanceKm || 0.0,
+          outcome: attempt.outcome || 'pending',
+          assignedAt: attempt.assignedAt ? new Date(attempt.assignedAt) : new Date()
+        }
+      });
+    } catch (err) {
+      console.error(`[DB Service] ❌ Failed to record dispatch assignment:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Updates dispatch assignment outcome ('accepted', 'declined', 'timed_out').
+   */
+  async updateAssignmentOutcome(requestId, technicianId, outcome, rejectionReason = null) {
+    if (!this.isConnected) return null;
+
+    try {
+      const recent = await prisma.dispatchAssignment.findFirst({
+        where: { requestId, technicianId },
+        orderBy: { assignedAt: 'desc' }
+      });
+
+      if (recent) {
+        return await prisma.dispatchAssignment.update({
+          where: { id: recent.id },
+          data: {
+            outcome,
+            rejectionReason: rejectionReason || undefined,
+            timedOutAt: outcome === 'timed_out' ? new Date() : undefined
+          }
+        });
+      }
+      return null;
+    } catch (err) {
+      console.error(`[DB Service] ❌ Error updating assignment outcome for ${requestId}:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Updates technician duty status, coordinates, wallet balance, and active request.
+   */
+  async updateTechnician(technicianId, updates) {
+    if (!this.isConnected) return null;
+
+    try {
+      const data = {};
+      if (updates.isOnline !== undefined) data.isOnline = updates.isOnline;
+      if (updates.status) data.status = updates.status;
+      if (updates.activeRequestId !== undefined) data.activeRequestId = updates.activeRequestId;
+      if (updates.walletBalance !== undefined) data.walletBalance = updates.walletBalance;
+      if (updates.earningsToday !== undefined) data.earningsToday = updates.earningsToday;
+      if (updates.completedJobsToday !== undefined) data.completedJobsToday = updates.completedJobsToday;
+      if (updates.rating !== undefined) data.rating = updates.rating;
+      if (updates.reviewCount !== undefined) data.reviewCount = updates.reviewCount;
+      if (updates.currentLocation) {
+        if (updates.currentLocation.lat) data.currentLat = updates.currentLocation.lat;
+        if (updates.currentLocation.lng) data.currentLng = updates.currentLocation.lng;
+        if (updates.currentLocation.address) data.currentAddress = updates.currentLocation.address;
+      }
+
+      return await prisma.technician.update({
+        where: { id: technicianId },
+        data
+      });
+    } catch (err) {
+      console.error(`[DB Service] ❌ Error updating technician ${technicianId}:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Settles request invoice and logs payment record with safe upsert.
+   */
+  async settleInvoice(requestId, paymentMethod = 'Apple Pay') {
+    if (!this.isConnected) return null;
+
+    try {
+      const invoice = await prisma.invoice.upsert({
+        where: { requestId },
+        update: {
+          isPaid: true,
+          paidAt: new Date(),
+          paymentMethod
+        },
+        create: {
+          requestId,
+          inspectionFee: 49.0,
+          emergencyLabor: 75.0,
+          prioritySurcharge: 25.0,
+          totalAmount: 149.0,
+          isPaid: true,
+          paidAt: new Date(),
+          paymentMethod
+        }
+      });
+
+      // Synchronize isPaid with ServiceHistory if present
+      await prisma.serviceHistory
+        .updateMany({
+          where: { requestId },
+          data: { isPaid: true }
+        })
+        .catch(() => {});
+
+      return invoice;
+    } catch (err) {
+      console.error(`[DB Service] ❌ Error settling invoice for ${requestId}:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Records or updates immutable service history when an incident completes.
+   */
+  async recordServiceHistory(historyData) {
+    if (!this.isConnected) return null;
+
+    try {
+      return await prisma.serviceHistory.upsert({
+        where: { requestId: historyData.requestId },
+        update: {
+          status: historyData.status || 'completed',
+          totalAmount: historyData.totalAmount || 149.0,
+          isPaid: historyData.isPaid || false,
+          rating: historyData.rating !== undefined ? historyData.rating : undefined,
+          feedback: historyData.feedback || undefined,
+          completedAt: historyData.completedAt ? new Date(historyData.completedAt) : new Date()
+        },
+        create: {
+          requestId: historyData.requestId,
+          customerId: historyData.customerId || 'u_cust_1',
+          technicianId: historyData.technicianId || null,
+          categoryName: historyData.categoryName || 'Emergency Service',
+          issueDescription: historyData.issueDescription || 'Emergency Repair',
+          status: historyData.status || 'completed',
+          totalAmount: historyData.totalAmount || 149.0,
+          isPaid: historyData.isPaid || false,
+          rating: historyData.rating || null,
+          feedback: historyData.feedback || null,
+          completedAt: historyData.completedAt ? new Date(historyData.completedAt) : new Date()
+        }
+      });
+    } catch (err) {
+      console.error(`[DB Service] ❌ Error recording service history for ${historyData.requestId}:`, err.message);
+      return null;
+    }
+  }
+}
+
+export const dbService = new DatabaseService();

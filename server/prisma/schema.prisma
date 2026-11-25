@@ -1,0 +1,606 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 1. Customer User Model
+model Customer {
+  id           String           @id
+  name         String
+  email        String           @unique
+  passwordHash String
+  role         String           @default("customer")
+  phone        String
+  avatar       String?
+  address      String
+  latitude     Float
+  longitude    Float
+  status       String           @default("active")
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  requests     ServiceRequest[]
+  histories    ServiceHistory[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("customers")
+}
+
+// 2. Service Category Model
+model ServiceCategory {
+  id              String           @id
+  name            String
+  icon            String
+  slaTargetMin    Int
+  commonIssues    String[]
+  defaultPriority String           @default("HIGH")
+  description     String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  technicians     Technician[]
+  requests        ServiceRequest[]
+
+  @@map("service_categories")
+}
+
+// 3. Technician Specialist Model
+model Technician {
+  id                 String               @id
+  name               String
+  email              String               @unique
+  passwordHash       String
+  role               String               @default("technician")
+  phone              String
+  avatar             String?
+  categoryId         String
+  categoryName       String
+  rating             Float                @default(4.8)
+  reviewCount        Int                  @default(0)
+  isOnline           Boolean              @default(true)
+  isApproved         Boolean              @default(true)
+  status             String               @default("idle")
+  shiftStatus        String               @default("ON_DUTY")
+  currentShiftId     String?
+  isOnBreak          Boolean              @default(false)
+  breakStartedAt     DateTime?
+  shiftStartedAt     DateTime?
+  currentLat         Float
+  currentLng         Float
+  currentAddress     String
+  workingRadiusKm    Float                @default(15.0)
+  completedJobsToday Int                  @default(0)
+  walletBalance      Float                @default(380.0)
+  earningsToday      Float                @default(0.0)
+  activeRequestId    String?
+  vehicleType        String               @default("Emergency Response Vehicle")
+  vehiclePlate       String               @default("RES-101")
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  category           ServiceCategory      @relation(fields: [categoryId], references: [id])
+  assignedRequests   ServiceRequest[]     @relation("AssignedTechnician")
+  assignments        DispatchAssignment[]
+  serviceHistories   ServiceHistory[]
+  shifts             TechnicianShift[]
+
+  @@index([categoryId])
+  @@index([isOnline, status])
+  @@index([shiftStatus])
+  @@map("technicians")
+}
+
+// 4. Emergency Service Request Model
+model ServiceRequest {
+  id                   String               @id
+  customerId           String
+  customerName         String
+  customerPhone        String
+  categoryId           String
+  categoryName         String
+  priority             String               @default("CRITICAL")
+  issueDescription     String
+  address              String
+  latitude             Float
+  longitude            Float
+  imageUrl             String?
+  status               String               @default("pending")
+  assignedTechnicianId String?
+  assignedAt           DateTime?
+  acceptedAt           DateTime?
+  enRouteAt            DateTime?
+  arrivedAt            DateTime?
+  workStartedAt        DateTime?
+  completedAt          DateTime?
+  cancelledAt          DateTime?
+  cancelReason         String?
+  escalatedReason      String?
+  distanceKm           Float?
+  etaMinutes           Int?
+  currentScore         Float?
+  timeoutRemaining     Int?
+  otp                  String?
+  otpVerified          Boolean              @default(false)
+  resolutionNotes      String?
+  partsUsed            String?
+  beforePhoto          String?
+  afterPhoto           String?
+  rating               Int?
+  feedback             String?
+  warrantyTerms        String?              @default("30-Day Workmanship Warranty")
+  warrantyExpiresAt    DateTime?
+  draftData            String?
+  isSimulated          Boolean              @default(false) @map("is_simulated")
+  dataSource           String               @default("production") @map("data_source")
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  customer             Customer             @relation(fields: [customerId], references: [id])
+  category             ServiceCategory      @relation(fields: [categoryId], references: [id])
+  assignedTechnician   Technician?          @relation("AssignedTechnician", fields: [assignedTechnicianId], references: [id])
+  invoice              Invoice?
+  dispatchAttempts     DispatchAssignment[]
+  serviceHistory       ServiceHistory?
+  jobMaterials         JobMaterial[]
+  complaints           CustomerComplaint[]
+  warrantyClaims       WarrantyClaim[]
+
+  @@index([status])
+  @@index([categoryId])
+  @@index([assignedTechnicianId])
+  @@index([customerId])
+  @@index([createdAt])
+  @@map("service_requests")
+}
+
+// 5. Dispatch Assignment Attempt Model
+model DispatchAssignment {
+  id              String         @id @default(cuid())
+  requestId       String
+  technicianId    String
+  technicianName  String
+  score           Float
+  distanceKm      Float
+  outcome         String         @default("pending")
+  rejectionReason String?
+  assignedAt      DateTime       @default(now())
+  timedOutAt      DateTime?
+  request         ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  technician      Technician     @relation(fields: [technicianId], references: [id])
+
+  @@index([requestId])
+  @@index([technicianId])
+  @@map("dispatch_assignments")
+}
+
+// 6. Service Invoice Model
+model Invoice {
+  id                String         @id @default(cuid())
+  requestId         String         @unique
+  inspectionFee     Float          @default(49.0)
+  emergencyLabor    Float          @default(75.0)
+  prioritySurcharge Float          @default(25.0)
+  totalAmount       Float          @default(149.0)
+  isPaid            Boolean        @default(false)
+  paidAt            DateTime?
+  paymentMethod     String?
+  razorpayOrderId   String?
+  razorpayPaymentId String?
+  razorpaySignature String?
+  refundId          String?
+  refundStatus      String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  request           ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([isPaid])
+  @@index([createdAt])
+  @@map("invoices")
+}
+
+// 7. Completed Incident History Model
+model ServiceHistory {
+  id               String         @id @default(cuid())
+  requestId        String         @unique
+  customerId       String
+  technicianId     String?
+  categoryName     String
+  issueDescription String
+  status           String
+  totalAmount      Float
+  isPaid           Boolean
+  rating           Int?
+  feedback         String?
+  completedAt      DateTime?
+  createdAt        DateTime       @default(now())
+  customer         Customer       @relation(fields: [customerId], references: [id])
+  technician       Technician?    @relation(fields: [technicianId], references: [id])
+  request          ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([technicianId])
+  @@map("service_histories")
+}
+
+// 8. Administrative Audit Log Model (Phase 4)
+model AuditLog {
+  id          String   @id @default(cuid())
+  adminId     String   @default("u_admin_1")
+  adminName   String   @default("Sarah Connor")
+  action      String
+  targetType  String
+  targetId    String
+  details     String?
+  reason      String?
+  previousVal String?
+  newVal      String?
+  ipAddress   String?  @default("127.0.0.1")
+  createdAt   DateTime @default(now())
+
+  @@index([action])
+  @@index([targetType, targetId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// 9. Admin Operational Alerts & Notifications (Phase 4)
+model AdminNotification {
+  id        String   @id @default(cuid())
+  type      String
+  title     String
+  message   String
+  severity  String   @default("info")
+  requestId String?
+  techId    String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([isRead])
+  @@index([severity])
+  @@index([createdAt])
+  @@map("admin_notifications")
+}
+
+// ==========================================
+// PHASE 5: AI INTELLIGENCE & PREDICTIVE MODELS
+// ==========================================
+
+// 10. AI Model Metrics & Version Metadata
+model AiModelMetadata {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  version      String   @default("v1.0.0")
+  type         String   // FORECASTING, ETA_REGRESSION, RECOMMENDATION, ANOMALY_DETECTION
+  trainingSize Int      @default(0)
+  features     String[]
+  metrics      String   // JSON string of MAE, RMSE, precision, recall, etc.
+  status       String   @default("active")
+  limitations  String?
+  evaluationPeriod          String?   @map("evaluation_period")
+  lastEvaluatedAt           DateTime? @map("last_evaluated_at")
+  fallbackPolicy            String    @default("DETERMINISTIC_RULES") @map("fallback_policy")
+  operationalStatus         String    @default("INSUFFICIENT_DATA") @map("operational_status")
+  realObservationCount      Int       @default(0) @map("real_observation_count")
+  simulatedObservationCount Int       @default(0) @map("simulated_observation_count")
+  baselineComparison        String?   @map("baseline_comparison")
+  trainedAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([type])
+  @@index([status])
+  @@map("ai_model_metrics")
+}
+
+// 11. Operational Anomaly Incidents
+model OperationalAnomaly {
+  id              String    @id @default(cuid())
+  type            String    // DISPATCH_LATENCY_SPIKE, REJECTION_BURST, CANCELLATION_SPIKE, COVERAGE_DEFICIT, SLA_BREACH_CLUSTER
+  title           String
+  description     String
+  severity        String    @default("warning") // info, warning, critical
+  entityType      String?   // category, technician, zone, system
+  entityId        String?
+  baselineMetric  Float?
+  observedMetric  Float?
+  evidence        String?   // JSON string
+  status          String    @default("open") // open, acknowledged, resolved
+  acknowledgedAt  DateTime?
+  acknowledgedBy  String?
+  resolutionNotes String?
+  createdAt       DateTime  @default(now())
+
+  @@index([status])
+  @@index([severity])
+  @@index([createdAt])
+  @@map("operational_anomalies")
+}
+
+// 12. AI-Generated Operational Recommendations
+model OperationalRecommendation {
+  id              String    @id @default(cuid())
+  title           String
+  category        String    @default("CAPACITY") // CAPACITY, COVERAGE, DISPATCH_POLICY, SLA_DEFENSE, WORKLOAD_BALANCE
+  reason          String
+  dataPoints      String?   // JSON string
+  expectedBenefit String
+  confidence      Float     @default(0.85)
+  suggestedAction String
+  status          String    @default("pending") // pending, accepted, dismissed, completed
+  resolvedAt      DateTime?
+  resolvedBy      String?
+  createdAt       DateTime  @default(now())
+
+  @@index([status])
+  @@index([category])
+  @@index([createdAt])
+  @@map("operational_recommendations")
+}
+
+// 13. Automation Trigger Rules
+model AutomationRule {
+  id             String                @id @default(cuid())
+  name           String
+  description    String
+  triggerType    String                // DEMAND_SPIKE, SLA_RISK, UNASSIGNED_TIMEOUT, CAPACITY_DEFICIT
+  threshold      Float                 @default(1.0)
+  actionType     String                // NOTIFY_ADMIN, FLAG_ANOMALY, SUGGEST_RECOMMENDATION
+  isEnabled      Boolean               @default(true)
+  lastRunAt      DateTime?
+  executionCount Int                   @default(0)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  executions     AutomationExecution[]
+
+  @@map("automation_rules")
+}
+
+// 14. Automation Execution Logs
+model AutomationExecution {
+  id           String         @id @default(cuid())
+  ruleId       String
+  triggerEvent String
+  status       String         @default("success") // success, skipped, failed
+  details      String?        // JSON string
+  executedAt   DateTime       @default(now())
+  rule         AutomationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId])
+  @@index([executedAt])
+  @@map("automation_executions")
+}
+
+// 15. Prediction Logs & Error Tracking
+model PredictionLog {
+  id             String   @id @default(cuid())
+  modelType      String   // ETA, DEMAND, RECOMMENDATION
+  targetEntity   String?  // requestId, categoryId
+  predictedValue Float
+  actualValue    Float?
+  error          Float?
+  routingSource  String?  @map("routing_source")
+  isSimulated    Boolean  @default(false) @map("is_simulated")
+  features       String?  // JSON string
+  createdAt      DateTime @default(now())
+
+  @@index([modelType])
+  @@index([createdAt])
+  @@map("prediction_logs")
+}
+
+// ==========================================
+// PHASE 8: REAL-WORLD EXTERNAL CONNECTIVITY
+// ==========================================
+
+// 16. External Payment Transactions Model (Phase 8)
+model PaymentTransaction {
+  id                String   @id @default(cuid())
+  invoiceId         String
+  requestId         String
+  gateway           String   @default("RAZORPAY")
+  orderId           String
+  paymentId         String?
+  amountPaise       Int
+  currency          String   @default("INR")
+  status            String   // created, authorized, captured, failed, refunded
+  signatureVerified Boolean  @default(false)
+  idempotencyKey    String   @unique
+  errorDescription  String?
+  refundId          String?
+  metadata          String?  // JSON string
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([paymentId])
+  @@index([requestId])
+  @@map("payment_transactions")
+}
+
+// 17. External Notification Audit Log (Phase 8)
+model ExternalNotification {
+  id            String   @id @default(cuid())
+  channel       String   // WHATSAPP, SMS
+  recipient     String   // phone number (masked)
+  recipientRole String   // customer, technician
+  event         String   // BOOKING_CREATED, TECHNICIAN_ARRIVED, etc.
+  templateId    String
+  status        String   // delivered, sent, failed, unverified_no_credentials
+  providerId    String?  // Meta message ID, MSG91 request ID
+  attempts      Int      @default(1)
+  error         String?
+  requestId     String?
+  createdAt     DateTime @default(now())
+
+  @@index([channel])
+  @@index([status])
+  @@index([requestId])
+  @@map("external_notifications")
+}
+
+// 18. Cloud Storage Evidence Metadata (Phase 8)
+model StorageFile {
+  id            String   @id @default(cuid())
+  bucket        String   // service-evidence, signatures, technician-documents
+  filePath      String   @unique
+  fileName      String
+  mimeType      String
+  fileSizeBytes Int
+  uploadedBy    String   // userId
+  userRole      String   // customer, technician, admin
+  requestId     String?
+  fileCategory  String   // beforePhoto, afterPhoto, customerSignature, license
+  isPublic      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  @@index([bucket])
+  @@index([requestId])
+  @@index([uploadedBy])
+  @@map("storage_files")
+}
+
+// ==========================================
+// PHASE 9: FIELD OPERATIONS, WORKFORCE & SUPPORT
+// ==========================================
+
+// 19. Technician Shift & Working Hours Model (Phase 9)
+model TechnicianShift {
+  id                   String     @id @default(cuid())
+  technicianId         String
+  technicianName       String
+  shiftStatus          String     @default("ON_DUTY") // ON_DUTY, ON_BREAK, OFF_DUTY
+  startedAt            DateTime   @default(now())
+  endedAt              DateTime?
+  totalDurationMinutes Int?
+  breakCount           Int        @default(0)
+  totalBreakMinutes    Int        @default(0)
+  notes                String?
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+  technician           Technician @relation(fields: [technicianId], references: [id], onDelete: Cascade)
+
+  @@index([technicianId])
+  @@index([shiftStatus])
+  @@index([startedAt])
+  @@map("technician_shifts")
+}
+
+// 20. Inventory Catalog Item Model (Phase 9)
+model InventoryItem {
+  id            String                 @id @default(cuid())
+  sku           String                 @unique
+  name          String
+  category      String
+  unitPrice     Float
+  stockQuantity Int                    @default(50)
+  minThreshold  Int                    @default(10)
+  unit          String                 @default("piece")
+  description   String?
+  isActive      Boolean                @default(true)
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+  transactions  InventoryTransaction[]
+  jobMaterials  JobMaterial[]
+
+  @@index([category])
+  @@index([sku])
+  @@index([stockQuantity])
+  @@map("inventory_items")
+}
+
+// 21. Inventory Adjustment & Usage Transaction Model (Phase 9)
+model InventoryTransaction {
+  id              String        @id @default(cuid())
+  itemId          String
+  transactionType String        // USAGE, RESTOCK, ADJUSTMENT, RETURN
+  quantityDelta   Int
+  previousStock   Int
+  newStock        Int
+  unitPrice       Float
+  requestId       String?
+  technicianId    String?
+  reason          String?
+  idempotencyKey  String?       @unique
+  createdAt       DateTime      @default(now())
+  item            InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@index([itemId])
+  @@index([requestId])
+  @@index([transactionType])
+  @@map("inventory_transactions")
+}
+
+// 22. Job Material Consumption Model (Phase 9)
+model JobMaterial {
+  id           String         @id @default(cuid())
+  requestId    String
+  itemId       String
+  itemName     String
+  quantity     Int            @default(1)
+  unitPrice    Float
+  totalPrice   Float
+  technicianId String
+  createdAt    DateTime       @default(now())
+  request      ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  item         InventoryItem  @relation(fields: [itemId], references: [id])
+
+  @@index([requestId])
+  @@index([itemId])
+  @@map("job_materials")
+}
+
+// 23. Customer Complaint Model (Phase 9)
+model CustomerComplaint {
+  id              String         @id @default(cuid())
+  requestId       String
+  customerId      String
+  customerName    String
+  category        String         // WORKMANSHIP, BILLING_ISSUE, TECHNICIAN_CONDUCT, DELAY, DAMAGE
+  description     String
+  evidenceUrl     String?
+  status          String         @default("OPEN") // OPEN, IN_REVIEW, RESOLVED, REOPENED
+  assignedAdminId String?
+  resolutionNotes String?
+  resolvedAt      DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  request         ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId])
+  @@index([customerId])
+  @@index([status])
+  @@map("customer_complaints")
+}
+
+// 24. Warranty Claim Model (Phase 9)
+model WarrantyClaim {
+  id                String         @id @default(cuid())
+  requestId         String
+  customerId        String
+  customerName      String
+  warrantyTerms     String
+  warrantyExpiresAt DateTime
+  claimReason       String
+  status            String         @default("PENDING") // PENDING, APPROVED, REJECTED
+  adminNotes        String?
+  followUpRequestId String?
+  resolvedAt        DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  request           ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId])
+  @@index([customerId])
+  @@index([status])
+  @@map("warranty_claims")
+}
+
+// 25. Razorpay Inbound Webhook Durability Log (Phase 8 Carryover)
+model WebhookEvent {
+  id          String   @id // Razorpay event ID e.g. "evt_..."
+  eventType   String
+  payload     String?
+  processedAt DateTime @default(now())
+
+  @@map("webhook_events")
+}

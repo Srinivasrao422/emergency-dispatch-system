@@ -1,0 +1,466 @@
+import React, { useState } from 'react';
+import { useApp } from '../context/AppContext';
+import LeafletMap from '../components/LeafletMap';
+import {
+  Wrench,
+  Radio,
+  Power,
+  Navigation,
+  CheckCircle,
+  Clock,
+  MapPin,
+  FileText,
+  DollarSign,
+  Star,
+  Award,
+  AlertTriangle,
+  Play,
+  CheckCheck,
+  CheckCircle2,
+  XCircle,
+  Truck,
+  Phone,
+  MessageSquare,
+  KeyRound,
+  ShieldCheck,
+  Wallet,
+  ArrowUpRight,
+  Camera,
+  Check,
+  AlertOctagon
+} from 'lucide-react';
+
+export default function TechnicianDashboard() {
+  const {
+    currentUser,
+    toggleTechnicianOnline,
+    technicians,
+    requests,
+    startNavigation,
+    startWork,
+    completeJob,
+    verifyServiceOTP,
+    uploadJobPhotos,
+    requestTechnicianPayout
+  } = useApp();
+
+  const [enteredOtp, setEnteredOtp] = useState('');
+  const [notes, setNotes] = useState('');
+  const [partsUsed, setPartsUsed] = useState('');
+  const [beforePhoto, setBeforePhoto] = useState(
+    'https://images.unsplash.com/photo-1584622650111-993a426fbf0a?w=400'
+  );
+  const [afterPhoto, setAfterPhoto] = useState(
+    'https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=400'
+  );
+
+  // Field Safety Checklist (Phase 3)
+  const [safetyChecks, setSafetyChecks] = useState({
+    valveShut: true,
+    ppeEquipped: true,
+    meterZeroed: true
+  });
+
+  const [isPayoutProcessing, setIsPayoutProcessing] = useState(false);
+
+  // Find technician record
+  const currentTech =
+    technicians.find((t) => t.id === currentUser.id) ||
+    technicians[0];
+
+  // Find active job assigned to this technician
+  const activeJob = requests.find(
+    (r) => r.assignedTechnicianId === currentTech.id && r.status !== 'completed' && r.status !== 'cancelled'
+  );
+
+  const handleVerifyOtpSubmit = async (e) => {
+    e.preventDefault();
+    if (!activeJob) return;
+    await verifyServiceOTP(activeJob.id, enteredOtp);
+    setEnteredOtp('');
+  };
+
+  const handleCompleteJobSubmit = (e) => {
+    e.preventDefault();
+    if (!activeJob) return;
+    completeJob(
+      activeJob.id,
+      notes || 'Emergency diagnostic completed. System pressure tested and certified.',
+      partsUsed || 'Diagnostic Replacement Kit',
+      beforePhoto,
+      afterPhoto
+    );
+  };
+
+  const handlePayout = async () => {
+    setIsPayoutProcessing(true);
+    await requestTechnicianPayout(currentTech.id);
+    setIsPayoutProcessing(false);
+  };
+
+  const allSafetyPassed =
+    safetyChecks.valveShut && safetyChecks.ppeEquipped && safetyChecks.meterZeroed;
+
+  return (
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+      {/* Top Console Card */}
+      <div className="bg-slate-900/80 border border-slate-800/90 rounded-2xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          <img
+            src={currentTech.avatar}
+            alt={currentTech.name}
+            className="w-12 h-12 rounded-xl object-cover border border-slate-700"
+          />
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg font-bold text-white">{currentTech.name}</h1>
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-950/80 text-amber-300 border border-amber-800/60">
+                {currentTech.categoryName}
+              </span>
+              <span className="flex items-center gap-0.5 text-xs text-amber-400 font-medium">
+                <Star className="w-3 h-3 fill-current" />
+                {currentTech.rating}
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Vehicle: {currentTech.vehicle?.type} ({currentTech.vehicle?.plate}) • Base: {currentTech.currentLocation?.address}
+            </p>
+          </div>
+        </div>
+
+        {/* Online / Offline Switch */}
+        <div className="flex items-center gap-3 bg-slate-950 p-2.5 rounded-xl border border-slate-800 self-start sm:self-auto">
+          <div className="text-right">
+            <div className="text-[11px] text-slate-400">Availability</div>
+            <div
+              className={`font-semibold text-xs ${
+                currentTech.isOnline ? 'text-emerald-400' : 'text-slate-400'
+              }`}
+            >
+              {currentTech.isOnline ? 'Online (Dispatches Active)' : 'Offline'}
+            </div>
+          </div>
+
+          <button
+            onClick={() => toggleTechnicianOnline(currentTech.id)}
+            className={`p-2 rounded-lg transition-all ${
+              currentTech.isOnline
+                ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-400'
+            }`}
+            title="Toggle Online Status"
+          >
+            <Power className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Main Grid: Active Job vs Standby + Wallet */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Left Column: Job Details or Standby (7 cols) */}
+        <div className="lg:col-span-7 space-y-5">
+          {activeJob ? (
+            <div className="bg-slate-900/80 border border-slate-800/90 rounded-2xl p-5 shadow-sm space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800/80">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono font-semibold text-xs text-slate-300">{activeJob.id}</span>
+                  <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800">
+                    {activeJob.status.replace('_', ' ')}
+                  </span>
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-800">
+                    {activeJob.priority}
+                  </span>
+                </div>
+
+                <div className="text-xs text-slate-400 font-mono">
+                  ETA: <strong className="text-emerald-400">{activeJob.etaMinutes || 3} min</strong> ({activeJob.distanceKm || 0.8} km)
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="font-bold text-sm text-white">{activeJob.categoryName}</div>
+                <p className="text-xs text-slate-300 bg-slate-950 p-3 rounded-xl border border-slate-800">
+                  "{activeJob.issueDescription}"
+                </p>
+              </div>
+
+              {/* Customer Contact Card */}
+              <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 text-xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-slate-400 text-[11px]">Customer:</div>
+                    <div className="font-semibold text-white">{activeJob.customerName}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-slate-400 text-[11px]">Contact:</div>
+                    <div className="font-mono text-slate-300">{activeJob.customerPhone}</div>
+                  </div>
+                </div>
+                <div className="pt-2 border-t border-slate-900 flex items-center gap-1.5 text-slate-300">
+                  <MapPin className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                  <span>{activeJob.location?.address}</span>
+                </div>
+              </div>
+
+              {/* Milestone Actions & Verification */}
+              <div className="pt-2 space-y-3">
+                <div className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
+                  Field Operations Console
+                </div>
+
+                {/* 1. Accepted -> Start Navigation */}
+                {activeJob.status === 'accepted' && (
+                  <button
+                    onClick={() => startNavigation(activeJob.id)}
+                    className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 font-semibold text-xs text-white shadow-sm flex items-center justify-center gap-2 transition-all"
+                  >
+                    <Navigation className="w-4 h-4" />
+                    <span>Start Driving & Broadcast GPS Telemetry</span>
+                  </button>
+                )}
+
+                {/* 2. En Route -> Simulating arrival */}
+                {activeJob.status === 'en_route' && (
+                  <div className="p-3 bg-blue-950/40 border border-blue-800/60 rounded-xl text-xs text-blue-200 flex items-center justify-between">
+                    <span className="flex items-center gap-2">
+                      <Truck className="w-4 h-4 text-blue-400 animate-pulse" />
+                      <span>Driving towards customer location... GPS synchronizing</span>
+                    </span>
+                    <button
+                      onClick={() => startWork(activeJob.id)}
+                      className="px-3 py-1 rounded-lg bg-blue-600 text-white font-semibold text-xs"
+                    >
+                      Fast Arrive
+                    </button>
+                  </div>
+                )}
+
+                {/* 3. Arrived -> 4-Digit Customer Security OTP Verification (Phase 1) */}
+                {activeJob.status === 'arrived' && (
+                  <form onSubmit={handleVerifyOtpSubmit} className="space-y-3 p-4 rounded-xl bg-amber-950/30 border border-amber-600/40">
+                    <div className="flex items-center gap-2 text-amber-300 font-bold text-xs">
+                      <KeyRound className="w-4 h-4" />
+                      <span>Step 1 of 2: Customer Security OTP Verification</span>
+                    </div>
+                    <p className="text-[11px] text-slate-300">
+                      Urban Company Security Gate: Ask customer for their 4-digit arrival start code to confirm physical presence.
+                    </p>
+
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        maxLength={4}
+                        value={enteredOtp}
+                        onChange={(e) => setEnteredOtp(e.target.value)}
+                        placeholder="Enter 4-digit OTP"
+                        required
+                        className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-center text-sm font-mono tracking-widest text-white focus:outline-none focus:border-amber-500"
+                      />
+                      <button
+                        type="submit"
+                        className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 font-bold text-xs text-white shadow-sm"
+                      >
+                        Verify OTP & Start Work
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1">
+                      <span>Customer's OTP: {activeJob.otp || '7842'}</span>
+                      <button
+                        type="button"
+                        onClick={() => setEnteredOtp(activeJob.otp || '7842')}
+                        className="text-amber-400 hover:text-amber-300 underline font-semibold"
+                      >
+                        Auto-Fill OTP
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {/* 4. In Progress -> Safety Checklist, Photo Proof & Completion (Phase 3) */}
+                {activeJob.status === 'in_progress' && (
+                  <form onSubmit={handleCompleteJobSubmit} className="space-y-4 p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs">
+                    {/* Safety Checklist */}
+                    <div className="space-y-2 pb-3 border-b border-slate-800">
+                      <div className="flex items-center gap-2 text-slate-200 font-semibold text-xs">
+                        <AlertOctagon className="w-4 h-4 text-amber-400" />
+                        <span>Mandatory Field Safety Checklist</span>
+                      </div>
+
+                      <div className="space-y-1.5 text-[11px] text-slate-300">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={safetyChecks.valveShut}
+                            onChange={(e) => setSafetyChecks((s) => ({ ...s, valveShut: e.target.checked }))}
+                            className="rounded bg-slate-900 border-slate-700 text-emerald-600"
+                          />
+                          <span>Primary utility isolation valve / breaker confirmed shut</span>
+                        </label>
+
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={safetyChecks.ppeEquipped}
+                            onChange={(e) => setSafetyChecks((s) => ({ ...s, ppeEquipped: e.target.checked }))}
+                            className="rounded bg-slate-900 border-slate-700 text-emerald-600"
+                          />
+                          <span>Protective PPE equipment & certified gear equipped</span>
+                        </label>
+
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={safetyChecks.meterZeroed}
+                            onChange={(e) => setSafetyChecks((s) => ({ ...s, meterZeroed: e.target.checked }))}
+                            className="rounded bg-slate-900 border-slate-700 text-emerald-600"
+                          />
+                          <span>Calibration pressure meter / digital tester zeroed</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Before & After Photo Proof Upload (Phase 3) */}
+                    <div className="space-y-2 pb-3 border-b border-slate-800">
+                      <div className="flex items-center gap-2 text-slate-200 font-semibold text-xs">
+                        <Camera className="w-4 h-4 text-blue-400" />
+                        <span>Before & After Photo Proof Verification</span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <span className="text-[10px] text-slate-400 block">1. Before Repair:</span>
+                          <img
+                            src={beforePhoto}
+                            alt="Before repair"
+                            className="w-full h-20 rounded-lg object-cover border border-slate-700"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-[10px] text-slate-400 block">2. After Repair:</span>
+                          <img
+                            src={afterPhoto}
+                            alt="After repair"
+                            className="w-full h-20 rounded-lg object-cover border border-slate-700"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Resolution Notes & Parts */}
+                    <div className="space-y-2">
+                      <div>
+                        <label className="text-[11px] font-medium text-slate-400 block mb-1">
+                          Technician Resolution Notes:
+                        </label>
+                        <textarea
+                          value={notes}
+                          onChange={(e) => setNotes(e.target.value)}
+                          rows={2}
+                          placeholder="e.g. Replaced ruptured relief valve, calibrated pressure to 55 PSI, zero leaks detected."
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-slate-100 focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-medium text-slate-400 block mb-1">
+                          Components Replaced:
+                        </label>
+                        <input
+                          type="text"
+                          value={partsUsed}
+                          onChange={(e) => setPartsUsed(e.target.value)}
+                          placeholder="e.g. Commercial Brass Shutoff Valve, High-Grade Teflon Gasket"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-slate-100 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={!allSafetyPassed}
+                      className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 font-semibold text-xs text-white shadow-sm flex items-center justify-center gap-2 transition-all"
+                    >
+                      <CheckCircle className="w-4 h-4" />
+                      <span>Complete Service & Issue $149.00 Invoice</span>
+                    </button>
+                  </form>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-10 text-center space-y-3">
+              <div className="w-12 h-12 rounded-xl bg-slate-800/80 border border-slate-700/60 flex items-center justify-center mx-auto text-emerald-400">
+                <Radio className="w-6 h-6 animate-pulse" />
+              </div>
+              <h3 className="font-semibold text-sm text-white">Technician Console Standby</h3>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                Continuous GPS telemetry broadcasting. When an emergency is matched in {currentTech.categoryName || 'your specialty'}, you receive instant alert with 30s acceptance timer.
+              </p>
+              <div className="text-[11px] font-mono text-emerald-400">
+                Status: {currentTech.isOnline ? '🟢 Available for Dispatches' : '⚪ Offline'}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Right Column: Earnings Wallet & Route Map (5 cols) */}
+        <div className="lg:col-span-5 space-y-5">
+          {/* Technician Wallet Card (Phase 3 Benchmark) */}
+          <div className="bg-slate-900/80 border border-slate-800/90 rounded-2xl p-5 shadow-sm space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+              <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs uppercase">
+                <Wallet className="w-4 h-4" />
+                <span>Specialist Payout Wallet</span>
+              </div>
+              <span className="text-[10px] text-slate-400 font-mono">85/15 Split</span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                <span className="text-slate-400 text-[11px]">Today's Earnings:</span>
+                <div className="text-lg font-bold text-white font-mono mt-0.5">
+                  ${(currentTech.earningsToday || 126.65).toFixed(2)}
+                </div>
+                <div className="text-[10px] text-slate-500">Net after 15% platform fee</div>
+              </div>
+
+              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                <span className="text-slate-400 text-[11px]">Available Balance:</span>
+                <div className="text-lg font-bold text-emerald-400 font-mono mt-0.5">
+                  ${(currentTech.walletBalance || 476.65).toFixed(2)}
+                </div>
+                <div className="text-[10px] text-emerald-400 font-semibold">Ready for Transfer</div>
+              </div>
+            </div>
+
+            <button
+              onClick={handlePayout}
+              disabled={isPayoutProcessing}
+              className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 hover:text-white font-semibold text-xs border border-slate-700 transition-colors flex items-center justify-center gap-2"
+            >
+              <ArrowUpRight className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{isPayoutProcessing ? 'Transferring...' : 'Instant Payout to Bank Account'}</span>
+            </button>
+          </div>
+
+          {/* Map Preview */}
+          <div className="bg-slate-900/80 border border-slate-800/90 rounded-2xl p-3.5 shadow-sm space-y-2">
+            <div className="flex items-center justify-between text-xs font-semibold text-white px-1">
+              <span>Customer Location & GPS Route</span>
+              <span className="text-emerald-400 text-[11px] font-mono">Telemetry Active</span>
+            </div>
+
+            <LeafletMap
+              activeRequest={activeJob}
+              technicianLocation={currentTech.currentLocation}
+              customerLocation={activeJob ? activeJob.location : currentTech.currentLocation}
+              height="280px"
+              zoom={14}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

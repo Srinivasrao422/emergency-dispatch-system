@@ -1,0 +1,256 @@
+import { prisma, verifyDatabaseConnection, isDatabaseConnected } from '../db/prisma.js';
+import { runDatabaseSeed } from '../prisma/seed.js';
+
+export class DatabaseService {
+  constructor() {
+    this.isConnected = false;
+  }
+
+  /**
+   * Initializes database connection, checks availability, runs seed if empty,
+   * and synchronizes in-memory state with PostgreSQL records.
+   */
+  async initialize(inMemoryState) {
+    try {
+      this.isConnected = await verifyDatabaseConnection();
+
+      if (this.isConnected) {
+        console.log('[DB Service] Synchronizing in-memory state with PostgreSQL...');
+
+        // Check if categories are seeded
+        const catCount = await prisma.serviceCategory.count();
+        if (catCount === 0) {
+          console.log('[DB Service] Database empty, triggering automatic seed...');
+          await runDatabaseSeed();
+        }
+
+        // Hydrate in-memory state from PostgreSQL to guarantee 100% backward compatibility
+        const dbCategories = await prisma.serviceCategory.findMany();
+        if (dbCategories.length > 0) {
+          inMemoryState.categories = dbCategories;
+        }
+
+        const dbTechnicians = await prisma.technician.findMany();
+        if (dbTechnicians.length > 0) {
+          inMemoryState.technicians = dbTechnicians.map((t) => ({
+            id: t.id,
+            name: t.name,
+            email: t.email,
+            role: t.role,
+            phone: t.phone,
+            avatar: t.avatar,
+            category: t.categoryId,
+            categoryName: t.categoryName,
+            rating: t.rating,
+            reviewCount: t.reviewCount,
+            isOnline: t.isOnline,
+            status: t.status,
+            currentLocation: {
+              lat: t.currentLat,
+              lng: t.currentLng,
+              address: t.currentAddress
+            },
+            workingRadiusKm: t.workingRadiusKm,
+            completedJobsToday: t.completedJobsToday,
+            walletBalance: t.walletBalance,
+            earningsToday: t.earningsToday,
+            activeRequestId: t.activeRequestId,
+            vehicle: { type: t.vehicleType, plate: t.vehiclePlate }
+          }));
+        }
+
+        console.log(
+          `[DB Service] ✅ Synced ${inMemoryState.categories.length} categories and ${inMemoryState.technicians.length} specialists from PostgreSQL.`
+        );
+      }
+    } catch (err) {
+      this.isConnected = false;
+      console.warn(`[DB Service] ⚠️ Database initialization bypassed: ${err.message}`);
+    }
+  }
+
+  /**
+   * Persists a newly created emergency service request into PostgreSQL.
+   */
+  async persistEmergencyRequest(reqObj) {
+    if (!this.isConnected) return null;
+
+    try {
+      // Ensure customer exists in DB before linking
+      await prisma.customer.upsert({
+        where: { id: reqObj.customerId || 'u_cust_1' },
+        update: {},
+        create: {
+          id: reqObj.customerId || 'u_cust_1',
+          name: reqObj.customerName || 'Jane Doe',
+          email: `${reqObj.customerId || 'customer'}@resqdispatch.com`,
+          passwordHash: '$2a$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', // 'cust123'
+          phone: reqObj.customerPhone || '+1 (555) 234-5678',
+          address: reqObj.location?.address || '452 Broadway, SoHo, NY',
+          latitude: reqObj.location?.lat || 40.7208,
+          longitude: reqObj.location?.lng || -74.0007
+        }
+      });
+
+      const created = await prisma.serviceRequest.create({
+        data: {
+          id: reqObj.id,
+          customerId: reqObj.customerId || 'u_cust_1',
+          customerName: reqObj.customerName || 'Jane Doe',
+          customerPhone: reqObj.customerPhone || '+1 (555) 234-5678',
+          categoryId: reqObj.category,
+          categoryName: reqObj.categoryName || reqObj.category,
+          priority: reqObj.priority || 'CRITICAL',
+          issueDescription: reqObj.issueDescription,
+          address: reqObj.location?.address || 'Emergency Site',
+          latitude: reqObj.location?.lat || 40.7208,
+          longitude: reqObj.location?.lng || -74.0007,
+          imageUrl: reqObj.imageUrl || '',
+          status: reqObj.status || 'pending',
+          otp: reqObj.otp || null,
+          otpVerified: reqObj.otpVerified || false,
+          createdAt: new Date(reqObj.createdAt || Date.now()),
+          invoice: reqObj.invoice
+            ? {
+                create: {
+                  inspectionFee: reqObj.invoice.inspectionFee || 49.0,
+                  emergencyLabor: reqObj.invoice.emergencyLabor || 75.0,
+                  prioritySurcharge: reqObj.invoice.prioritySurcharge || 25.0,
+                  totalAmount: reqObj.invoice.totalAmount || 149.0,
+                  isPaid: reqObj.invoice.isPaid || false
+                }
+              }
+            : undefined
+        }
+      });
+
+      return created;
+    } catch (err) {
+      console.error(`[DB Service] ❌ Failed to persist request ${reqObj.id}:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Updates an existing emergency request with atomic field updates.
+   */
+  async updateRequest(requestId, updates) {
+    if (!this.isConnected) return null;
+
+    try {
+      const data = {};
+      if (updates.status) data.status = updates.status;
+      if (updates.assignedTechnicianId !== undefined) data.assignedTechnicianId = updates.assignedTechnicianId;
+      if (updates.assignedAt) data.assignedAt = new Date(updates.assignedAt);
+      if (updates.acceptedAt) data.acceptedAt = new Date(updates.acceptedAt);
+      if (updates.enRouteAt) data.enRouteAt = new Date(updates.enRouteAt);
+      if (updates.arrivedAt) data.arrivedAt = new Date(updates.arrivedAt);
+      if (updates.workStartedAt) data.workStartedAt = new Date(updates.workStartedAt);
+      if (updates.completedAt) data.completedAt = new Date(updates.completedAt);
+      if (updates.cancelledAt) data.cancelledAt = new Date(updates.cancelledAt);
+      if (updates.cancelReason) data.cancelReason = updates.cancelReason;
+      if (updates.escalatedReason) data.escalatedReason = updates.escalatedReason;
+      if (updates.distanceKm !== undefined) data.distanceKm = updates.distanceKm;
+      if (updates.etaMinutes !== undefined) data.etaMinutes = updates.etaMinutes;
+      if (updates.currentScore !== undefined) data.currentScore = updates.currentScore;
+      if (updates.timeoutRemaining !== undefined) data.timeoutRemaining = updates.timeoutRemaining;
+      if (updates.otp) data.otp = updates.otp;
+      if (updates.otpVerified !== undefined) data.otpVerified = updates.otpVerified;
+      if (updates.resolutionNotes) data.resolutionNotes = updates.resolutionNotes;
+      if (updates.partsUsed) data.partsUsed = updates.partsUsed;
+      if (updates.beforePhoto) data.beforePhoto = updates.beforePhoto;
+      if (updates.afterPhoto) data.afterPhoto = updates.afterPhoto;
+      if (updates.rating !== undefined) data.rating = updates.rating;
+      if (updates.feedback) data.feedback = updates.feedback;
+
+      const updated = await prisma.serviceRequest.update({
+        where: { id: requestId },
+        data
+      });
+
+      return updated;
+    } catch (err) {
+      console.error(`[DB Service] ❌ Error updating request ${requestId}:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Records a single dispatch assignment attempt to maintain full audit trails.
+   */
+  async recordAssignmentAttempt(attempt) {
+    if (!this.isConnected) return null;
+
+    try {
+      return await prisma.dispatchAssignment.create({
+        data: {
+          requestId: attempt.requestId,
+          technicianId: attempt.technicianId,
+          technicianName: attempt.technicianName || 'Specialist',
+          score: attempt.score || 0.0,
+          distanceKm: attempt.distanceKm || 0.0,
+          outcome: attempt.outcome || 'pending',
+          assignedAt: attempt.assignedAt ? new Date(attempt.assignedAt) : new Date()
+        }
+      });
+    } catch (err) {
+      console.error(`[DB Service] ❌ Failed to record dispatch assignment:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Updates technician duty status, coordinates, and active request.
+   */
+  async updateTechnician(technicianId, updates) {
+    if (!this.isConnected) return null;
+
+    try {
+      const data = {};
+      if (updates.isOnline !== undefined) data.isOnline = updates.isOnline;
+      if (updates.status) data.status = updates.status;
+      if (updates.activeRequestId !== undefined) data.activeRequestId = updates.activeRequestId;
+      if (updates.walletBalance !== undefined) data.walletBalance = updates.walletBalance;
+      if (updates.earningsToday !== undefined) data.earningsToday = updates.earningsToday;
+      if (updates.completedJobsToday !== undefined) data.completedJobsToday = updates.completedJobsToday;
+      if (updates.rating !== undefined) data.rating = updates.rating;
+      if (updates.reviewCount !== undefined) data.reviewCount = updates.reviewCount;
+      if (updates.currentLocation) {
+        if (updates.currentLocation.lat) data.currentLat = updates.currentLocation.lat;
+        if (updates.currentLocation.lng) data.currentLng = updates.currentLocation.lng;
+        if (updates.currentLocation.address) data.currentAddress = updates.currentLocation.address;
+      }
+
+      return await prisma.technician.update({
+        where: { id: technicianId },
+        data
+      });
+    } catch (err) {
+      console.error(`[DB Service] ❌ Error updating technician ${technicianId}:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Settles request invoice and logs payment record.
+   */
+  async settleInvoice(requestId, paymentMethod = 'Apple Pay') {
+    if (!this.isConnected) return null;
+
+    try {
+      return await prisma.invoice.update({
+        where: { requestId },
+        data: {
+          isPaid: true,
+          paidAt: new Date(),
+          paymentMethod
+        }
+      });
+    } catch (err) {
+      console.error(`[DB Service] ❌ Error settling invoice for ${requestId}:`, err.message);
+      return null;
+    }
+  }
+}
+
+export const dbService = new DatabaseService();
